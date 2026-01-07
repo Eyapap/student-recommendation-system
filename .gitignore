@@ -20,3 +20,5 @@ mlruns/
 # Logs : On ne veut pas pousser l'historique de tes terminaux
 logs/
 *.log
+*.db
+models/

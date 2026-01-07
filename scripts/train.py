@@ -617,7 +617,12 @@ def main():
         mlflow.set_tracking_uri(config.TRACKING_URI)
         mlflow.set_experiment(config.EXPERIMENT_NAME)
         
-        with mlflow.start_run(run_name=f"hybrid_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+        # Variable to capture the run_id for the filename
+        run_id = None
+        
+        with mlflow.start_run(run_name=f"hybrid_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}") as run:
+            
+            run_id = run.info.run_id
             
             # Log parameters
             logger.info("\n Logging parameters...")
@@ -629,7 +634,7 @@ def main():
             mlflow.log_param("relevance_threshold", config.RELEVANCE_THRESHOLD)
             logger.info(" Parameters logged")
             
-            # Log metrics for each approach
+            # Log metrics
             logger.info("\n Logging evaluation metrics...")
             
             # Content-Based metrics
@@ -652,10 +657,9 @@ def main():
             
             logger.info(" Metrics logged")
             
-            # Log artifacts
+            # Log artifacts (JSON configs)
             logger.info("\n Logging artifacts...")
             
-            # Save config as artifact
             config_dict = {
                 "tfidf_max_features": config.TFIDF_MAX_FEATURES,
                 "tfidf_ngram_range": config.TFIDF_NGRAM_RANGE,
@@ -670,7 +674,6 @@ def main():
                 json.dump(config_dict, f, indent=2)
             mlflow.log_artifact("model_config.json")
             
-            # Save metrics summary
             metrics_summary = {
                 "content_based": content_metrics,
                 "collaborative_filtering": cf_metrics,
@@ -681,11 +684,44 @@ def main():
                 json.dump(metrics_summary, f, indent=2)
             mlflow.log_artifact("metrics_summary.json")
             
-            logger.info(" Artifacts logged")
+            # ====================================================================
+            #  SAVING MODEL TO 'models/' WITH RUN_ID
+            # ====================================================================
+            import os
+            import pickle
             
-            # Get run info
-            run_id = mlflow.active_run().info.run_id
+            # 1. Ensure 'models' directory exists
+            output_dir = "models"
+            os.makedirs(output_dir, exist_ok=True)
             
+            # 2. Create the filename using the Run ID
+            # Example: models/model-fee3bcccc76c43f4ae2a0780f67bdfbd.pkl
+            model_filename = f"model-{run_id}.pkl"
+            local_model_path = os.path.join(output_dir, model_filename)
+            
+            logger.info(f"\nSaving model to: {local_model_path}...")
+            
+            # 3. Prepare the object
+            recommender = {
+                "tfidf_vectorizer": tfidf_vectorizer,
+                "svd_model": svd_model,
+                "student_to_idx": student_to_idx,
+                "program_to_idx": program_to_idx,
+                "programs_df": programs, 
+                "program_soup": program_soup,
+                "config": config_dict
+            }
+            
+            # 4. Save pickle file
+            with open(local_model_path, "wb") as f:
+                pickle.dump(recommender, f)
+            
+            # 5. Log it to MLflow as well
+            mlflow.log_artifact(local_model_path)
+            
+            logger.info(f"Model saved successfully as: {model_filename}")
+            # ====================================================================
+
         # ====================================================================
         # STEP 6: SUMMARY & RESULTS
         # ====================================================================
@@ -714,8 +750,9 @@ def main():
         print("=" * 70)
         print(f"\nFinal Hybrid Precision@3: {hybrid_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
         print(f" MLflow Run ID: {run_id}")
+        print(f" Model saved locally at: models/model-{run_id}.pkl")
         print("\nTo view results:")
-        print("  $ mlflow ui --host 127.0.0.1 --port 5000")
+        print("   $ mlflow ui --host 127.0.0.1 --port 5000")
         print("=" * 70 + "\n")
         
         return 0
