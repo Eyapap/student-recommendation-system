@@ -11,3 +11,5 @@ data/*.json
 
 # Modèles IA (souvent trop gros pour Git)
 models/*.pkl
+
+key.json
