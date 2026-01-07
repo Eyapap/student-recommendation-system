@@ -1,0 +1,17 @@
+{
+  "content_based": {
+    "precision_at_3": 0.4357298474945533,
+    "recall_at_3": 0.8910675381263617,
+    "users_evaluated": 153
+  },
+  "collaborative_filtering": {
+    "precision_at_3": 0.5185185185185184,
+    "recall_at_3": 0.9967320261437909,
+    "users_evaluated": 153
+  },
+  "hybrid": {
+    "precision_at_3": 0.5163398692810458,
+    "recall_at_3": 0.9945533769063182,
+    "users_evaluated": 153
+  }
+}

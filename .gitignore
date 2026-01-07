@@ -13,3 +13,10 @@ data/*.json
 models/*.pkl
 
 key.json
+# MLflow : On ne veut pas pousser la base de données locale et les 1000 fichiers de tests
+mlruns/
+.trash/
+
+# Logs : On ne veut pas pousser l'historique de tes terminaux
+logs/
+*.log

@@ -1,0 +1,12 @@
+{
+  "tfidf_max_features": 100,
+  "tfidf_ngram_range": [
+    1,
+    2
+  ],
+  "svd_n_components": 10,
+  "content_weight": 0.4,
+  "cf_weight": 0.6,
+  "precision_k": 3,
+  "relevance_threshold": 4
+}
