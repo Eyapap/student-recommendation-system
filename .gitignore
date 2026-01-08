@@ -21,4 +21,4 @@ mlruns/
 logs/
 *.log
 *.db
-models/
+models/*.pkl
