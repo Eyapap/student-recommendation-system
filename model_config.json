@@ -1,12 +1,14 @@
 {
-  "tfidf_max_features": 100,
+  "tfidf_max_features": 200,
   "tfidf_ngram_range": [
     1,
     2
   ],
-  "svd_n_components": 10,
-  "content_weight": 0.4,
-  "cf_weight": 0.6,
-  "precision_k": 3,
+  "svd_n_components": 6,
+  "svd_mean_center": true,
+  "cf_ridge_eps": 0.001,
+  "content_weight": 0.75,
+  "cf_weight": 0.25,
+  "precision_k": 5,
   "relevance_threshold": 4
 }

@@ -24,7 +24,7 @@ import json
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -90,25 +90,30 @@ class Config:
     RATINGS_CSV = DATA_DIR / "ratings.csv"
     
     # Model parameters
-    TFIDF_MAX_FEATURES = 100
+    TFIDF_MAX_FEATURES = 200
     TFIDF_NGRAM_RANGE = (1, 2)
-    SVD_N_COMPONENTS = 10
-    SVD_N_ITER = 100
+    SVD_N_COMPONENTS = 6
+    SVD_N_ITER = 60
+    SVD_MEAN_CENTER = True
+    CF_RIDGE_EPS = 1e-3
     
     # Hybrid weights
-    CONTENT_WEIGHT = 0.4
-    CF_WEIGHT = 0.6
+    CONTENT_WEIGHT = 0.75
+    CF_WEIGHT = 0.25
     
     # Evaluation
-    PRECISION_K = 3
+    PRECISION_K = 5
     RELEVANCE_THRESHOLD = 4  # rating >= 4 is positive
+    TEST_SIZE = 0.3
+    RANDOM_STATE = 42
+    MIN_RATINGS_PER_STUDENT = 2
     
     # MLflow
-    EXPERIMENT_NAME = "Recommender_Hybrid"
+    EXPERIMENT_NAME = "5_Final_K5"
     TRACKING_URI = "mlruns"
     
     # Grade threshold for interest keywords
-    HIGH_GRADE_THRESHOLD = 14
+    HIGH_GRADE_THRESHOLD = 15
 
 
 # ============================================================================
@@ -180,6 +185,49 @@ def load_data(config: Config) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     return students, programs, ratings
 
 
+def filter_ratings_by_min_interactions(
+    ratings: pd.DataFrame,
+    min_ratings: int
+) -> pd.DataFrame:
+    """Keep only students who have at least `min_ratings` interactions."""
+    user_counts = ratings['student_id'].value_counts()
+    valid_users = user_counts[user_counts >= min_ratings].index
+    filtered = ratings[ratings['student_id'].isin(valid_users)].copy()
+    logger.info("\n[FILTER] Minimum ratings per student: %d", min_ratings)
+    logger.info("[FILTER] Students kept: %d", len(valid_users))
+    logger.info("[FILTER] Removed interactions: %d", len(ratings) - len(filtered))
+    if filtered.empty:
+        raise ValueError(
+            "Filtering removed all ratings. Reduce MIN_RATINGS_PER_STUDENT or collect more data."
+        )
+    return filtered
+
+
+def split_ratings_per_student(
+    ratings: pd.DataFrame,
+    test_size: float,
+    random_state: int
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Perform per-student hold-out using deterministic shuffling."""
+    rng = np.random.default_rng(random_state)
+    train_indices = []
+    test_indices = []
+    for student_id, group in ratings.groupby('student_id'):
+        indices = group.index.to_numpy()
+        rng.shuffle(indices)
+        n = len(indices)
+        if n == 1:
+            train_indices.extend(indices.tolist())
+            continue
+        n_test = max(1, int(round(n * test_size)))
+        n_test = min(n - 1, n_test)
+        test_indices.extend(indices[:n_test])
+        train_indices.extend(indices[n_test:])
+    train_df = ratings.loc[train_indices].sort_index().reset_index(drop=True)
+    test_df = ratings.loc[test_indices].sort_index().reset_index(drop=True)
+    return train_df, test_df
+
+
 # ============================================================================
 # FEATURE ENGINEERING
 # ============================================================================
@@ -238,6 +286,21 @@ def create_student_soup(students: pd.DataFrame, config: Config) -> pd.Series:
         
         if pd.notna(row['technology_grade']) and row['technology_grade'] > config.HIGH_GRADE_THRESHOLD:
             soup += " technology coding programming ai software"
+
+        grade_token_map = {
+            'math_grade': 'math_score',
+            'art_grade': 'art_score',
+            'history_grade': 'history_score',
+            'technology_grade': 'tech_score'
+        }
+        grade_tokens = []
+        for col, token_prefix in grade_token_map.items():
+            grade_val = row[col] if col in row else None
+            if pd.notna(grade_val):
+                bucket = int(round(float(grade_val)))
+                grade_tokens.append(f"{token_prefix}_{bucket}")
+        if grade_tokens:
+            soup += " " + " ".join(grade_tokens)
         
         return soup
     
@@ -356,7 +419,23 @@ def build_collaborative_model(
             interaction_matrix[student_idx, program_idx] = row['rating']
     
     # Convert to sparse matrix
-    interaction_sparse = csr_matrix(interaction_matrix)
+    mask = interaction_matrix > 0
+    user_interaction_counts = mask.sum(axis=1)
+    user_rating_sums = interaction_matrix.sum(axis=1)
+    user_means = np.divide(
+        user_rating_sums,
+        user_interaction_counts,
+        out=np.zeros_like(user_rating_sums),
+        where=user_interaction_counts > 0
+    )
+
+    if config.SVD_MEAN_CENTER:
+        logger.info("[CF] Applying per-student mean centering before SVD.")
+        centered_matrix = interaction_matrix - (user_means[:, None] * mask)
+    else:
+        centered_matrix = interaction_matrix
+
+    interaction_sparse = csr_matrix(centered_matrix)
     sparsity = (1 - len(interaction_sparse.data) / interaction_sparse.size) * 100
     
     logger.info(f"\n[OK] Interaction matrix created:")
@@ -386,7 +465,7 @@ def build_collaborative_model(
     
     # Normalize to [0, 1]
     cf_min, cf_max = cf_similarity_raw.min(), cf_similarity_raw.max()
-    cf_similarity = (cf_similarity_raw - cf_min) / (cf_max - cf_min + 1e-10)
+    cf_similarity = (cf_similarity_raw - cf_min) / (cf_max - cf_min + config.CF_RIDGE_EPS)
     
     logger.info(f"[OK] CF similarity matrix: {cf_similarity.shape}")
     logger.info(f"   Range: [{cf_similarity.min():.3f}, {cf_similarity.max():.3f}]")
@@ -467,6 +546,26 @@ def compute_precision_at_k(
     return relevant_in_topk / k
 
 
+def compute_ndcg_at_k(
+    rankings: np.ndarray,
+    ground_truth: np.ndarray,
+    k: int = 3
+) -> float:
+    """Compute NDCG@K for a single user using binary relevance."""
+    top_k_indices = np.argsort(rankings)[::-1][:k]
+    gains = ground_truth[top_k_indices]
+    if gains.sum() == 0:
+        return 0.0
+    discounts = np.log2(np.arange(1, len(gains) + 1) + 1)
+    dcg = np.sum((2 ** gains - 1) / discounts)
+    ideal_gains = np.sort(ground_truth)[::-1][:k]
+    ideal_discounts = np.log2(np.arange(1, len(ideal_gains) + 1) + 1)
+    idcg = np.sum((2 ** ideal_gains - 1) / ideal_discounts)
+    if idcg == 0:
+        return 0.0
+    return dcg / idcg
+
+
 def evaluate_recommender(
     similarity_matrix: np.ndarray,
     ratings: pd.DataFrame,
@@ -509,6 +608,7 @@ def evaluate_recommender(
     # Compute Precision@K for each user
     precisions = []
     recalls = []
+    ndcgs = []
     
     for user_idx in range(len(similarity_matrix)):
         scores = similarity_matrix[user_idx]
@@ -523,21 +623,26 @@ def evaluate_recommender(
         # Recall@K
         top_k_indices = np.argsort(scores)[::-1][:config.PRECISION_K]
         recall = np.sum(gt[top_k_indices]) / total_relevant
+        ndcg = compute_ndcg_at_k(scores, gt, config.PRECISION_K)
         
         precisions.append(precision)
         recalls.append(recall)
+        ndcgs.append(ndcg)
     
     mean_precision = np.mean(precisions) if precisions else 0.0
     mean_recall = np.mean(recalls) if recalls else 0.0
+    mean_ndcg = np.mean(ndcgs) if ndcgs else 0.0
     
     logger.info(f" Evaluation metrics ({approach_name}):")
     logger.info(f"   Precision@{config.PRECISION_K}: {mean_precision:.4f}")
     logger.info(f"   Recall@{config.PRECISION_K}: {mean_recall:.4f}")
+    logger.info(f"   NDCG@{config.PRECISION_K}: {mean_ndcg:.4f}")
     logger.info(f"   Users evaluated: {len(precisions)}")
     
     return {
         f"precision_at_{config.PRECISION_K}": mean_precision,
         f"recall_at_{config.PRECISION_K}": mean_recall,
+        f"ndcg_at_{config.PRECISION_K}": mean_ndcg,
         "users_evaluated": len(precisions)
     }
 
@@ -561,6 +666,31 @@ def main():
         # STEP 1: LOAD DATA
         # ====================================================================
         students, programs, ratings = load_data(config)
+        ratings = filter_ratings_by_min_interactions(
+            ratings,
+            config.MIN_RATINGS_PER_STUDENT
+        )
+        logger.info("\n" + "=" * 70)
+        logger.info("SPLITTING RATINGS INTO TRAIN/TEST (per student)")
+        logger.info("=" * 70)
+        logger.info(
+            "[SPLIT] Deterministic per-student split across %d students (test_size=%.2f)",
+            ratings['student_id'].nunique(),
+            config.TEST_SIZE
+        )
+
+        train_ratings, test_ratings = split_ratings_per_student(
+            ratings,
+            test_size=config.TEST_SIZE,
+            random_state=config.RANDOM_STATE
+        )
+        logger.info("[SPLIT] Split completed successfully.")
+        held_out_students = test_ratings['student_id'].nunique()
+        logger.info("   Students with hold-out interactions: %d", held_out_students)
+
+        logger.info(f"   Train ratings: {len(train_ratings):,}")
+        logger.info(f"   Test ratings:  {len(test_ratings):,}")
+        logger.info(f"   Hold-out ratio: {config.TEST_SIZE:.2%}")
         
         # ====================================================================
         # STEP 2: FEATURE ENGINEERING
@@ -579,7 +709,7 @@ def main():
         
         # Collaborative filtering model
         cf_similarity, svd_model, student_to_idx, program_to_idx = build_collaborative_model(
-            ratings, students, programs, config
+            train_ratings, students, programs, config
         )
         
         # Hybrid model
@@ -592,19 +722,31 @@ def main():
         logger.info("EVALUATING ALL MODELS")
         logger.info("=" * 70)
         
-        content_metrics = evaluate_recommender(
-            content_similarity, ratings, students, programs,
-            student_to_idx, program_to_idx, config, "Content-Based"
+        content_train_metrics = evaluate_recommender(
+            content_similarity, train_ratings, students, programs,
+            student_to_idx, program_to_idx, config, "Content-Based [train]"
+        )
+        content_test_metrics = evaluate_recommender(
+            content_similarity, test_ratings, students, programs,
+            student_to_idx, program_to_idx, config, "Content-Based [test]"
         )
         
-        cf_metrics = evaluate_recommender(
-            cf_similarity, ratings, students, programs,
-            student_to_idx, program_to_idx, config, "Collaborative Filtering"
+        cf_train_metrics = evaluate_recommender(
+            cf_similarity, train_ratings, students, programs,
+            student_to_idx, program_to_idx, config, "Collaborative Filtering [train]"
+        )
+        cf_test_metrics = evaluate_recommender(
+            cf_similarity, test_ratings, students, programs,
+            student_to_idx, program_to_idx, config, "Collaborative Filtering [test]"
         )
         
-        hybrid_metrics = evaluate_recommender(
-            hybrid_similarity, ratings, students, programs,
-            student_to_idx, program_to_idx, config, "Hybrid"
+        hybrid_train_metrics = evaluate_recommender(
+            hybrid_similarity, train_ratings, students, programs,
+            student_to_idx, program_to_idx, config, "Hybrid [train]"
+        )
+        hybrid_test_metrics = evaluate_recommender(
+            hybrid_similarity, test_ratings, students, programs,
+            student_to_idx, program_to_idx, config, "Hybrid [test]"
         )
         
         # ====================================================================
@@ -632,28 +774,40 @@ def main():
             mlflow.log_param("tfidf_max_features", config.TFIDF_MAX_FEATURES)
             mlflow.log_param("precision_k", config.PRECISION_K)
             mlflow.log_param("relevance_threshold", config.RELEVANCE_THRESHOLD)
+            mlflow.log_param("test_size", config.TEST_SIZE)
+            mlflow.log_param("random_state", config.RANDOM_STATE)
             logger.info(" Parameters logged")
             
             # Log metrics
             logger.info("\n Logging evaluation metrics...")
+            logger.info("   (MLflow: hybrid-only as requested)")
             
-            # Content-Based metrics
-            mlflow.log_metric("content_precision_at_3", 
-                            content_metrics[f"precision_at_{config.PRECISION_K}"])
-            mlflow.log_metric("content_recall_at_3",
-                            content_metrics[f"recall_at_{config.PRECISION_K}"])
-            
-            # Collaborative Filtering metrics
-            mlflow.log_metric("cf_precision_at_3",
-                            cf_metrics[f"precision_at_{config.PRECISION_K}"])
-            mlflow.log_metric("cf_recall_at_3",
-                            cf_metrics[f"recall_at_{config.PRECISION_K}"])
-            
+            metric_suffix = config.PRECISION_K
             # Hybrid metrics
-            mlflow.log_metric("hybrid_precision_at_3",
-                            hybrid_metrics[f"precision_at_{config.PRECISION_K}"])
-            mlflow.log_metric("hybrid_recall_at_3",
-                            hybrid_metrics[f"recall_at_{config.PRECISION_K}"])
+            mlflow.log_metric(
+                f"hybrid_precision_at_{metric_suffix}_train",
+                hybrid_train_metrics[f"precision_at_{config.PRECISION_K}"]
+            )
+            mlflow.log_metric(
+                f"hybrid_precision_at_{metric_suffix}_test",
+                hybrid_test_metrics[f"precision_at_{config.PRECISION_K}"]
+            )
+            mlflow.log_metric(
+                f"hybrid_recall_at_{metric_suffix}_train",
+                hybrid_train_metrics[f"recall_at_{config.PRECISION_K}"]
+            )
+            mlflow.log_metric(
+                f"hybrid_recall_at_{metric_suffix}_test",
+                hybrid_test_metrics[f"recall_at_{config.PRECISION_K}"]
+            )
+            mlflow.log_metric(
+                f"hybrid_ndcg_at_{metric_suffix}_train",
+                hybrid_train_metrics[f"ndcg_at_{config.PRECISION_K}"]
+            )
+            mlflow.log_metric(
+                f"hybrid_ndcg_at_{metric_suffix}_test",
+                hybrid_test_metrics[f"ndcg_at_{config.PRECISION_K}"]
+            )
             
             logger.info(" Metrics logged")
             
@@ -664,6 +818,8 @@ def main():
                 "tfidf_max_features": config.TFIDF_MAX_FEATURES,
                 "tfidf_ngram_range": config.TFIDF_NGRAM_RANGE,
                 "svd_n_components": config.SVD_N_COMPONENTS,
+                "svd_mean_center": config.SVD_MEAN_CENTER,
+                "cf_ridge_eps": config.CF_RIDGE_EPS,
                 "content_weight": config.CONTENT_WEIGHT,
                 "cf_weight": config.CF_WEIGHT,
                 "precision_k": config.PRECISION_K,
@@ -675,9 +831,12 @@ def main():
             mlflow.log_artifact("model_config.json")
             
             metrics_summary = {
-                "content_based": content_metrics,
-                "collaborative_filtering": cf_metrics,
-                "hybrid": hybrid_metrics
+                "train": {
+                    "hybrid": hybrid_train_metrics
+                },
+                "test": {
+                    "hybrid": hybrid_test_metrics
+                }
             }
             
             with open("metrics_summary.json", "w") as f:
@@ -729,26 +888,51 @@ def main():
         logger.info("TRAINING COMPLETE - FINAL RESULTS")
         logger.info("=" * 70)
         
-        logger.info("\n PRECISION@3 Summary:")
-        logger.info(f"   Content-Based: {content_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
-        logger.info(f"   Collaborative:  {cf_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
-        logger.info(f"   Hybrid:         {hybrid_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"\n PRECISION@{config.PRECISION_K} Summary (Train set):")
+        logger.info(f"   Content-Based: {content_train_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Collaborative:  {cf_train_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Hybrid:         {hybrid_train_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
         
-        best_approach = max(
-            [("Content-Based", content_metrics[f'precision_at_{config.PRECISION_K}']),
-             ("Collaborative", cf_metrics[f'precision_at_{config.PRECISION_K}']),
-             ("Hybrid", hybrid_metrics[f'precision_at_{config.PRECISION_K}'])],
+        logger.info(f"\n PRECISION@{config.PRECISION_K} Summary (Test set):")
+        logger.info(f"   Content-Based: {content_test_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Collaborative:  {cf_test_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Hybrid:         {hybrid_test_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+
+        logger.info(f"\n NDCG@{config.PRECISION_K} Summary (Train set):")
+        logger.info(f"   Content-Based: {content_train_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Collaborative:  {cf_train_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Hybrid:         {hybrid_train_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        
+        logger.info(f"\n NDCG@{config.PRECISION_K} Summary (Test set):")
+        logger.info(f"   Content-Based: {content_test_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Collaborative:  {cf_test_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        logger.info(f"   Hybrid:         {hybrid_test_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        
+        best_train = max(
+            [("Content-Based", content_train_metrics[f'precision_at_{config.PRECISION_K}']),
+             ("Collaborative", cf_train_metrics[f'precision_at_{config.PRECISION_K}']),
+             ("Hybrid", hybrid_train_metrics[f'precision_at_{config.PRECISION_K}'])],
+            key=lambda x: x[1]
+        )
+        best_test = max(
+            [("Content-Based", content_test_metrics[f'precision_at_{config.PRECISION_K}']),
+             ("Collaborative", cf_test_metrics[f'precision_at_{config.PRECISION_K}']),
+             ("Hybrid", hybrid_test_metrics[f'precision_at_{config.PRECISION_K}'])],
             key=lambda x: x[1]
         )
         
-        logger.info(f"\n[BEST] Best Approach: {best_approach[0]} (Precision@3: {best_approach[1]:.4f})")
+        logger.info(f"\n[BEST][TRAIN] {best_train[0]} (Precision@{config.PRECISION_K}: {best_train[1]:.4f})")
+        logger.info(f"[BEST][TEST]  {best_test[0]} (Precision@{config.PRECISION_K}: {best_test[1]:.4f})")
         logger.info(f"[RUN_ID] MLflow Run ID: {run_id}")
         logger.info(f"[TRACKING] Tracking URI: {config.TRACKING_URI}")
         
         print("\n" + "=" * 70)
         print("[SUCCESS] TRAINING PIPELINE COMPLETED SUCCESSFULLY!")
         print("=" * 70)
-        print(f"\nFinal Hybrid Precision@3: {hybrid_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        print(f"\nFinal Hybrid Precision@{config.PRECISION_K} (test): {hybrid_test_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        print(f"Final Hybrid Precision@{config.PRECISION_K} (train): {hybrid_train_metrics[f'precision_at_{config.PRECISION_K}']:.4f}")
+        print(f"Final Hybrid NDCG@{config.PRECISION_K} (test): {hybrid_test_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
+        print(f"Final Hybrid NDCG@{config.PRECISION_K} (train): {hybrid_train_metrics[f'ndcg_at_{config.PRECISION_K}']:.4f}")
         print(f" MLflow Run ID: {run_id}")
         print(f" Model saved locally at: models/model-{run_id}.pkl")
         print("\nTo view results:")

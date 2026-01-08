@@ -197,30 +197,65 @@ def main():
         # Input section with checkboxes for interests
         st.subheader("🎯 Select Your Interests")
         
-        interest_options = {
-            "coding": "💻 Coding",
-            "math": "🔢 Mathematics", 
-            "drawing": "🎨 Drawing",
-            "art": "🖼️ Art",
-            "reading": "📚 Reading",
-            "logic": "🧠 Logic",
-            "ai": "🤖 AI",
-            "design": "✏️ Design",
-            "stats": "📊 Statistics",
-            "software": "⚙️ Software"
+        interest_categories = {
+            "Technology & Data": [
+                ("coding", "💻 Coding"),
+                ("ai", "🤖 AI & Robotics"),
+                ("cybersecurity", "🛡️ Cybersecurity"),
+                ("data", "📈 Data Science"),
+                ("math", "🔢 Mathematics"),
+                ("statistics", "📊 Statistics")
+            ],
+            "Creative & Design": [
+                ("drawing", "🎨 Drawing"),
+                ("design", "✏️ Design"),
+                ("architecture", "🏛️ Architecture"),
+                ("music", "🎶 Music Production"),
+                ("culinary", "🍳 Culinary Arts")
+            ],
+            "Health & Science": [
+                ("sports", "🏅 Sports Science"),
+                ("biology", "🧬 Biology"),
+                ("environment", "🌱 Environment"),
+                ("marine", "🌊 Marine Life"),
+                ("psychology", "🧠 Psychology")
+            ],
+            "Humanities & Culture": [
+                ("literature", "📖 Literature"),
+                ("journalism", "📰 Journalism"),
+                ("history", "🏺 History & Law"),
+                ("philosophy", "🧠 Philosophy"),
+                ("international", "🌍 International Relations")
+            ],
+            "Business & Leadership": [
+                ("business", "💼 Business"),
+                ("entrepreneurship", "🚀 Entrepreneurship")
+            ],
+            "Other": [
+                ("coding-clubs", "🤝 Clubs & Communities"),
+                ("volunteering", "💖 Social Impact"),
+                ("innovation", "💡 Innovation"),
+                ("logistics", "📦 Logistics"),
+                ("other", "✨ Other Passions")
+            ]
         }
         
-        # Create 5 columns for checkboxes
-        cols = st.columns(5)
         selected_interests = []
-        
-        for i, (key, label) in enumerate(interest_options.items()):
-            with cols[i % 5]:
-                if st.checkbox(label, key=f"interest_{key}"):
-                    selected_interests.append(key)
+        col_expanders = st.columns(3)
+        for idx, (category, items) in enumerate(interest_categories.items()):
+            with col_expanders[idx % 3]:
+                with st.expander(category, expanded=False):
+                    inner_cols = st.columns(2)
+                    for i, (key, label) in enumerate(items):
+                        with inner_cols[i % 2]:
+                            if st.checkbox(label, key=f"interest_{key}"):
+                                selected_interests.append(key)
         
         # Additional text input for custom interests
-        custom = st.text_input("➕ Add more interests (space-separated)", placeholder="e.g., biology chemistry")
+        custom = st.text_input(
+            "➕ Add more interests (space-separated)",
+            placeholder="e.g., climate diplomacy journalism music"
+        )
         
         if custom:
             selected_interests.extend(custom.split())

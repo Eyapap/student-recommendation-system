@@ -1,17 +1,18 @@
 {
-  "content_based": {
-    "precision_at_3": 0.27777777777777785,
-    "recall_at_3": 0.40720720720720716,
-    "users_evaluated": 222
+  "train": {
+    "hybrid": {
+      "precision_at_5": 0.19896373056994818,
+      "recall_at_5": 0.6511226252158895,
+      "ndcg_at_5": 0.4426154652917145,
+      "users_evaluated": 193
+    }
   },
-  "collaborative_filtering": {
-    "precision_at_3": 0.5630630630630631,
-    "recall_at_3": 0.740990990990991,
-    "users_evaluated": 222
-  },
-  "hybrid": {
-    "precision_at_3": 0.5615615615615616,
-    "recall_at_3": 0.7443693693693694,
-    "users_evaluated": 222
+  "test": {
+    "hybrid": {
+      "precision_at_5": 0.13717948717948716,
+      "recall_at_5": 0.5416666666666666,
+      "ndcg_at_5": 0.34328448197868583,
+      "users_evaluated": 156
+    }
   }
 }

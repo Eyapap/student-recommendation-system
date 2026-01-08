@@ -23,6 +23,10 @@ app = FastAPI(
 BASE_DIR = os.path.dirname(os.path.dirname(__file__)) # Remonte d'un niveau (racine du projet)
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 DATA_DIR = os.path.join(BASE_DIR, "data")
+TARGET_MODEL_FILE = os.environ.get(
+    "RECOMMENDER_MODEL_FILE",
+    "ClassifierModel.pkl"
+)
 
 # Fichiers de Logs (Séparés des données d'entraînement !)
 FEEDBACK_FILE = os.path.join(DATA_DIR, "feedback_log.csv")
@@ -49,6 +53,16 @@ def get_latest_model_path():
     # Trie par date (le plus récent en dernier)
     files.sort(key=lambda x: os.path.getmtime(os.path.join(MODEL_DIR, x)))
     return os.path.join(MODEL_DIR, files[-1])
+
+
+def resolve_model_path():
+    """Privilégie un modèle ciblé, sinon revient au plus récent."""
+    target_path = os.path.join(MODEL_DIR, TARGET_MODEL_FILE)
+    if os.path.exists(target_path):
+        print(f"[INFO] Utilisation du modèle ciblé: {TARGET_MODEL_FILE}")
+        return target_path
+    print("[WARN] Modèle ciblé introuvable, fallback vers le plus récent disponible.")
+    return get_latest_model_path()
 
 def log_inference(student_data, recommendations):
     """
@@ -85,7 +99,7 @@ def load_model():
     global recommender_system, students_df, programs_df
     try:
         # 1. Charger le modèle
-        model_path = get_latest_model_path()
+        model_path = resolve_model_path()
         print(f"[INFO] Chargement du modèle : {model_path}")
         with open(model_path, "rb") as f:
             recommender_system = pickle.load(f)
@@ -110,6 +124,14 @@ class StudentInput(BaseModel):
     art_grade: float = 10.0
     history_grade: float = 10.0
     technology_grade: float = 10.0
+
+
+GRADE_KEYWORD_BOOSTS = {
+    "math": "math algebra statistics modeling finance economics environment sustainability biology research data-science ",
+    "art": "art drawing design visual animation architecture music culinary creativity expression ",
+    "history": "history law reading analysis literature journalism politics philosophy international-relations storytelling ",
+    "technology": "technology coding ai programming robotics cybersecurity networking systems data-engineering "
+}
 
 # Modèle souple pour accepter ce que le Frontend envoie
 class FeedbackInput(BaseModel):
@@ -150,16 +172,16 @@ def recommend_programs(student: StudentInput):
         # Boost automatique basé sur les notes
         grade_boosts = []
         if student.math_grade > HIGH_GRADE_THRESHOLD:
-            student_soup += " math algebra statistics computation"
+            student_soup += GRADE_KEYWORD_BOOSTS["math"]
             grade_boosts.append("math")
         if student.art_grade > HIGH_GRADE_THRESHOLD:
-            student_soup += " art drawing design visual creativity"
+            student_soup += GRADE_KEYWORD_BOOSTS["art"]
             grade_boosts.append("art")
         if student.history_grade > HIGH_GRADE_THRESHOLD:
-            student_soup += " history law reading analysis literature"
+            student_soup += GRADE_KEYWORD_BOOSTS["history"]
             grade_boosts.append("history")
         if student.technology_grade > HIGH_GRADE_THRESHOLD:
-            student_soup += " technology coding programming ai software"
+            student_soup += GRADE_KEYWORD_BOOSTS["technology"]
             grade_boosts.append("technology")
             
         # --- 2. Calcul de similarité ---
