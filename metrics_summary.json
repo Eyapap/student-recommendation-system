@@ -1,17 +1,17 @@
 {
   "content_based": {
-    "precision_at_3": 0.4357298474945533,
-    "recall_at_3": 0.8910675381263617,
-    "users_evaluated": 153
+    "precision_at_3": 0.27777777777777785,
+    "recall_at_3": 0.40720720720720716,
+    "users_evaluated": 222
   },
   "collaborative_filtering": {
-    "precision_at_3": 0.5185185185185184,
-    "recall_at_3": 0.9967320261437909,
-    "users_evaluated": 153
+    "precision_at_3": 0.5630630630630631,
+    "recall_at_3": 0.740990990990991,
+    "users_evaluated": 222
   },
   "hybrid": {
-    "precision_at_3": 0.5163398692810458,
-    "recall_at_3": 0.9945533769063182,
-    "users_evaluated": 153
+    "precision_at_3": 0.5615615615615616,
+    "recall_at_3": 0.7443693693693694,
+    "users_evaluated": 222
   }
 }
