@@ -4,8 +4,30 @@ import pandas as pd
 import os
 from datetime import datetime
 
-# Configuration
-API_URL = "http://127.0.0.1:8000"
+# Configuration helpers for Docker/Docker Compose compatibility
+def resolve_api_url() -> str:
+    """Resolve backend URL from secrets or env vars with Docker-safe defaults."""
+    secret_url = None
+    try:
+        if hasattr(st, "secrets") and "API_URL" in st.secrets:
+            secret_url = st.secrets["API_URL"]
+    except Exception:
+        secret_url = None
+    env_url = (
+        secret_url
+        or os.getenv("API_URL")
+        or os.getenv("BACKEND_URL")
+        or os.getenv("BACKEND_API_URL")
+        or os.getenv("STREAMLIT_BACKEND_URL")
+    )
+    if env_url:
+        return env_url.rstrip("/")
+    if os.getenv("DOCKER") or os.getenv("IN_DOCKER") or os.getenv("DOCKER_COMPOSE"):
+        return "http://backend:8000"
+    return "http://127.0.0.1:8000"
+
+
+API_URL = resolve_api_url()
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 FEEDBACK_FILE = os.path.join(DATA_DIR, "feedback_log.csv")
 
@@ -174,6 +196,7 @@ def load_feedback_data():
 # Main app with tabs
 def main():
     st.title("🎓 Student Program Recommender System")
+    st.caption(f"Backend API target: {API_URL}")
     if 'current_student_id' not in st.session_state:
         st.session_state['current_student_id'] = None
     if 'last_results' not in st.session_state:

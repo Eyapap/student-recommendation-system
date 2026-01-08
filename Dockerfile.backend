@@ -1,0 +1,23 @@
+# 1. Image de base légère
+FROM python:3.10-slim
+
+# 2. Optimisations Python
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# 3. Dossier de travail à la racine du conteneur
+WORKDIR /app
+
+# 4. Installation des dépendances (La version propre de 7 lignes !)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 5. Copie de TOUT le projet (backend/, models/, data/, etc.)
+COPY . .
+
+# 6. Exposition du port
+EXPOSE 8000
+
+# 7. Lancement de l'API
+# IMPORTANT : On pointe vers le dossier "backend", fichier "app", objet "app"
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

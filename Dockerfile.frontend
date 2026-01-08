@@ -1,0 +1,18 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# On installe streamlit et requests (pour appeler l'API) + pandas
+RUN pip install --no-cache-dir streamlit requests pandas
+
+# On copie tout le code
+COPY . .
+
+# Streamlit tourne sur le port 8501 par défaut
+EXPOSE 8501
+
+# L'adresse de l'API sera passée par variable d'environnement
+ENV API_URL="http://backend:8000"
+
+# Commande de lancement (Ajuste le chemin si ton fichier s'appelle autrement)
+CMD ["streamlit", "run", "frontend/ui.py", "--server.port=8501", "--server.address=0.0.0.0"]

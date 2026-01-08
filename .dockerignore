@@ -1,0 +1,7 @@
+venv/
+.git/
+.dvc/
+mlruns/
+__pycache__/
+*.pyc
+*.pyo
