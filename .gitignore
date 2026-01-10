@@ -11,6 +11,7 @@ data/*.json
 
 # Modèles IA (souvent trop gros pour Git)
 models/*.pkl
+!models/ClassifierModel.pkl
 
 key.json
 # MLflow : On ne veut pas pousser la base de données locale et les 1000 fichiers de tests
@@ -21,4 +22,3 @@ mlruns/
 logs/
 *.log
 *.db
-models/*.pkl

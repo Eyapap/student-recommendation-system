@@ -7,13 +7,14 @@ An end-to-end hybrid recommendation platform for students combining FastAPI, Str
 ```
 .
 ├── backend/               # FastAPI service exposing recommendation & feedback APIs
+├── data/                  # DVC data (CSV datasets & Feedback logs)
 ├── frontend/              # Streamlit UI for students and admins
 ├── scripts/               # Data generation and training utilities
 ├── models/                # Trained recommender pickle artifacts
-├── data/                  # CSV datasets + feedback logs
-├── Dockerfile.backend     # Backend image recipe
-├── Dockerfile.frontend    # Frontend image recipe
-├── docker-compose.yml     # Multi-container orchestrator
+├── notebooks/             # EAD and Model training notebook
+├── Dockerfile.backend     # Backend image 
+├── Dockerfile.frontend    # Frontend image 
+├── docker-compose.yml     # Orchestrator
 ├── requirements.txt       # Python dependencies
 └── README.md
 ```
@@ -23,6 +24,18 @@ An end-to-end hybrid recommendation platform for students combining FastAPI, Str
 - Python 3.10+
 - pip / virtualenv
 - Docker Desktop (optional but recommended for deployment)
+- DVC 3.x (only if you plan to fetch large datasets tracked via `.dvc` files)
+
+## Data Management (DVC)
+
+Large CSVs inside `data/` are referenced through `.dvc` pointer files (for example `programs.csv.dvc`). These files **do not** download the dataset automatically—you must pull them from the configured DVC remote:
+
+```bash
+dvc pull
+```
+
+This command requires that you have access to the remote storage defined in `.dvc/config`. If you are a new collaborator, ask the maintainer for remote credentials or replace the remote with your own storage bucket. Without running `dvc pull`, only the small pointer files will exist and training or local runs will fail because the actual CSVs are missing.
+(I pushed the model.pkl in github to facilitate the test and deployement of the work witthout dvc credentials)
 
 ## Local Development Setup
 
@@ -35,7 +48,6 @@ An end-to-end hybrid recommendation platform for students combining FastAPI, Str
 2. **Create & Activate Virtual Environment**
    ```bash
    python -m venv venv
-   source venv/bin/activate     # macOS/Linux
    venv\Scripts\activate       # Windows
    ```
 
@@ -94,7 +106,7 @@ An end-to-end hybrid recommendation platform for students combining FastAPI, Str
 3. **Outputs**
    - New model saved under `models/model-<run_id>.pkl`
    - `model_config.json` and `metrics_summary.json`
-   - Metrics logged to MLflow (`mlruns/` or DB if configured)
+   - Metrics logged to MLflow (`mlruns/`)
 
 4. **Updating Backend**
    - Backend loads `ClassifierModel.pkl` by default. Replace/rename the latest trained artifact or set `RECOMMENDER_MODEL_FILE` env var before starting backend.
@@ -107,7 +119,7 @@ An end-to-end hybrid recommendation platform for students combining FastAPI, Str
 | `RECOMMENDER_MODEL_FILE` | Backend target pickle filename | `ClassifierModel.pkl` |
 | `MLFLOW_TRACKING_URI` | Optional custom tracking URI | `mlruns` |
 
-Set env vars via shell, `.env`, or `streamlit secrets` as needed.
+
 
 ## Feedback & Logging
 
@@ -118,15 +130,12 @@ Set env vars via shell, `.env`, or `streamlit secrets` as needed.
 ## Troubleshooting
 
 - **UI shows “Cannot connect to API”**: ensure backend is running and `API_URL` points to it (localhost outside Docker, `backend` inside Compose).
-- **Docker version warning**: Compose `version` field is deprecated; can remove it without impact.
 - **Scikit-learn InconsistentVersionWarning**: align scikit-learn version inside Docker with the one used to pickle the model.
 - **Ports in use**: stop local services (`Ctrl+C` or `docker-compose down`) before restarting to free ports 8000/8501.
 
 ## Useful Commands
 
 ```bash
-# Lint data / inspect logs
-tail -f data/feedback_log.csv
 
 # View MLflow UI
 mlflow ui --host 127.0.0.1 --port 5000
@@ -135,6 +144,4 @@ mlflow ui --host 127.0.0.1 --port 5000
 python scripts/generate_data.py
 ```
 
-## License
 
-MIT (update if different). Feel free to adapt and extend the system for your own educational recommendation scenarios.
